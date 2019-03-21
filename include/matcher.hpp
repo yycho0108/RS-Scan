@@ -5,8 +5,8 @@
 #include <opencv2/core/core.hpp>
 #include <opencv2/highgui.hpp>
 #include <opencv2/calib3d/calib3d.hpp>
-
-#include "frame.hpp"
+//#include "frame.hpp"
+#include "types.hpp"
 
 struct Matcher{
     cv::Mat K_;
@@ -20,13 +20,13 @@ struct Matcher{
             std::vector<cv::DMatch>& m
             );
     void epifilter(
-            const Frame& kf0, const Frame& kf1,
+            const FrameData& kf0, const FrameData& kf1,
             const std::vector<cv::DMatch>& m_in,
             std::vector<cv::DMatch>& m_out
             );
     void match(
-            const Frame& kf0,
-            const Frame& kf1,
+            const FrameData& kf0,
+            const FrameData& kf1,
             std::vector<cv::DMatch>& match,
             bool cross=false,
             bool epicheck=false

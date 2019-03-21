@@ -154,10 +154,14 @@ class RS2{
 	kinectfusion::CameraParameters kf_params_;
 	std::shared_ptr<kinectfusion::Pipeline> kf_pl_;
 
+    // custom KF
+    RGBDRec rec;
+
 	// data cache 
 	float depth_scale_ = 1.0f;
 	rs2_stream align_to_;
 	std::shared_ptr<rs2::align> align_;
+    double stamp_;
 	cv::Mat dmap, cmap;
 
   public:
@@ -175,20 +179,25 @@ class RS2{
 	}
 
 	void start(){
-
 		rs2::config cfg{};
-		cfg.disable_all_streams();
-		cfg.enable_stream(RS2_STREAM_COLOR, 640, 480, RS2_FORMAT_BGR8, 30);
-		cfg.enable_stream(RS2_STREAM_DEPTH, 640, 480, RS2_FORMAT_Z16, 30);
+        cfg.enable_device_from_file("/home/jamie/Documents/20190321_081722.bag");
+
+		//cfg.disable_all_streams();
+		//cfg.enable_stream(RS2_STREAM_COLOR, 640, 480, RS2_FORMAT_BGR8, 30);
+		//cfg.enable_stream(RS2_STREAM_DEPTH, 640, 480, RS2_FORMAT_Z16, 30);
 
 		prof_ = pl_.start(cfg);
 
-        auto amd = pl_.get_active_profile().get_device().as<rs400::advanced_mode>();
-        std::ifstream t("/home/jamie/Documents/ShortRangePreset.json");
-        std::string json_content((std::istreambuf_iterator<char>(t)),
-                        std::istreambuf_iterator<char>());
-        amd.load_json(json_content);
+        /*
+        if( cfg_.size() > 0 ){
+            auto amd = pl_.get_active_profile().get_device().as<rs400::advanced_mode>();
+            std::ifstream t("/home/jamie/Documents/ShortRangePreset.json");
+            std::string json_content((std::istreambuf_iterator<char>(t)),
+                            std::istreambuf_iterator<char>());
+            amd.load_json(json_content);
+        }
         prof_ = pl_.get_active_profile();
+        */
 
 		update_profile(true);
 		update_params(); // only needs to be performed once (hopefully)
@@ -209,6 +218,10 @@ class RS2{
 		kf_params_.image_height  = intrinsic.height;
 		kf_params_.focal_x = intrinsic.fx;
 		kf_params_.focal_y = intrinsic.fy;
+
+        rec.set_intrinsic(
+                intrinsic.fx, intrinsic.fy,
+                intrinsic.ppx, intrinsic.ppy);
 
 		std::cout << kf_params_.image_width << std::endl;
 		std::cout << kf_params_.image_height << std::endl;
@@ -243,11 +256,16 @@ class RS2{
 		rs2::video_frame vf = fs_proc.first(align_to_);
 		rs2::depth_frame df = fs_proc.get_depth_frame();
 
+
 		set_color(vf, cmap);
-		set_depth(df, 1000.0f * depth_scale_, dmap);
+		//set_depth(df, 1000.0f * depth_scale_, dmap); // << 1000.0f necessary for kinectfusion
+		set_depth(df, depth_scale_, dmap);
+
+        stamp_ = fs.get_timestamp();
 	}
 	void proc(){
-		bool suc = kf_pl_->process_frame(dmap, cmap);
+        bool suc = this->rec.process_frame(dmap, cmap, stamp_);
+		//bool suc = kf_pl_->process_frame(dmap, cmap);
 		if(!suc){
 			std::cout << "KinectFusion Unsuccessful!!" << std::endl;
 		}
@@ -261,7 +279,8 @@ class RS2{
 		double mnv, mxv;
 		cv::minMaxIdx(dmap, &mnv, &mxv);
 		cv::imshow("dpt", dmap * (1.0 / mxv));
-		cv::imshow("Pipeline Output", kf_pl_->get_last_model_frame());
+
+		//cv::imshow("Pipeline Output", kf_pl_->get_last_model_frame());
 	}
 
 	void save(){
@@ -286,8 +305,7 @@ class RS2{
 
 };
 
-int main() try{
-    RGBDRec rec;
+int main() {
 
 	RS2 rs2;
 
@@ -312,11 +330,12 @@ int main() try{
 	}
 	rs2.save();
 }
-catch (const rs2::error & e)
-{
-    std::cerr << "RealSense error calling " << e.get_failed_function() << "(" << e.get_failed_args() << "):\n    " << e.what() << std::endl;
-    return EXIT_FAILURE;
-}
-catch (const std::exception& e){
-
-}
+//catch (const rs2::error & e)
+//{
+//    std::cerr << "RealSense error calling " << e.get_failed_function() << "(" << e.get_failed_args() << "):\n    " << e.what() << std::endl;
+//    return EXIT_FAILURE;
+//}
+//catch (const std::exception& e){
+//    std::cerr << "HMM?" << e.what() << std::endl;
+//    return EXIT_FAILURE;
+//}

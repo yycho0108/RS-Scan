@@ -22,25 +22,33 @@ Tracker::~Tracker(){
 void Tracker::track(
         const FrameData& kf0,
         const FrameData& kf1,
-        cv::vector<Point2f>& pt0,
-        cv::vector<Point2f>& pt1,
-        std::vector<size_t>& idx
-        //std::vector<size_t>& i0,
-        //std::vector<size_t>& i1,
+        std::vector<cv::Point2f>& pt0,
+        std::vector<cv::Point2f>& pt1,
+        std::vector<cv::DMatch>& m01
         ){
 
-    // TODO : do something about persistent kpt conversion
-    cv::KeyPoint::convert(kf0.kpt_, pt0);
-    pt1.reserve( pt0.size() );
-    // cv::KeyPoint::convert(kf0.kpt_, pt1);
+    if( pt0.size() <= 0) {
+        // pt0 == kf0.kpt_
+        cv::KeyPoint::convert(kf0.kpt_, pt0);
+        pt1.clear();
+        pt1.reserve( pt0.size() );
+        // cv::KeyPoint::convert(kf0.kpt_, pt1);
+        // TODO : do something about persistent kpt conversion
+    }
 
-    std::vector<char> status; 
+    std::vector<uint8_t> status; 
     std::vector<float> err;
     // TODO : support kf0.pyr_
-    tracker_->calc(kf0.img_, kf1.img_,
+    tracker_->calc(kf0.gray_, kf1.gray_,
             pt0, pt1,
             status, err);
 
-
     // TODO : support bidirectional check
+    m01.clear();
+    m01.reserve( pt0.size() );
+    for(int i=0; i<pt0.size(); ++i){
+        if(!status[i]) continue;
+        //queryIdx, trainIdx, distance
+        m01.emplace_back(i, i, err[i]);
+    }
 }

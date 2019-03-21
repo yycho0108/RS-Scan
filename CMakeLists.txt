@@ -50,14 +50,13 @@ include_directories(${PCL_INCLUDE_DIRS})
 link_directories(${PCL_LIBRARY_DIRS})
 add_definitions(${PCL_DEFINITIONS})
 
-SET( CMAKE_BUILD_TYPE Release FORCE )
-
-#if (CMAKE_BUILD_TYPE EQUAL "RELEASE")
+#SET( CMAKE_BUILD_TYPE Release FORCE )
+if (CMAKE_BUILD_TYPE EQUAL "RELEASE")
     message(STATUS "Create Release Build.")
     set(CMAKE_CXX_FLAGS "-O2 ${CMAKE_CXX_FLAGS}")
-    #else()
-    #    message(STATUS "Create Debug Build.")
-    #endif()
+else()
+    message(STATUS "Create Debug Build.")
+endif()
 
 set(CMAKE_CXX_FLAGS "-fPIE -fPIC -std=c++11 -D_FORTIFY_SOURCE=2 -fstack-protector -Wformat -Wformat-security -Wall ${CMAKE_CXX_FLAGS}")
 
@@ -84,9 +83,9 @@ target_link_libraries(main
     ${PCL_LIBRARIES}
     )
 
-add_executable(test_ir test_ir.cpp)
-target_link_libraries(test_ir
-    ${realsense2_LIBRARY}
-    ${CMAKE_THREAD_LIBS_INIT}
-	${OpenCV_LIBS}
-    )
+#add_executable(test_ir test_ir.cpp)
+#target_link_libraries(test_ir
+#    ${realsense2_LIBRARY}
+#    ${CMAKE_THREAD_LIBS_INIT}
+#	${OpenCV_LIBS}
+#    )

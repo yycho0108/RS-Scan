@@ -21,13 +21,15 @@ struct FrameData{
     // visual data
     cv::Mat img_;
     cv::Mat d_img_;
+    cv::Mat gray_;
+
     //pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud_;
     std::vector<cv::KeyPoint> kpt_;
     cv::Mat dsc_;
 
     // positional data
     Eigen::Isometry3d pose_;
-    Twist twist_;
+    Twist twist_; // TODO : proper twist
     double stamp_;
 
     float depth(size_t idx) const{
