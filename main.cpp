@@ -180,13 +180,21 @@ class RS2{
 
 	void start(){
 		rs2::config cfg{};
-        cfg.enable_device_from_file("/home/jamie/Documents/20190321_081722.bag");
+        //cfg.enable_device_from_file("/home/jamie/Documents/20190321_081722.bag");
+        cfg.enable_device_from_file("/home/jamie/Documents/20190322_075807.bag",
+                false // no repeat
+                );
 
+#if 0
 		//cfg.disable_all_streams();
 		//cfg.enable_stream(RS2_STREAM_COLOR, 640, 480, RS2_FORMAT_BGR8, 30);
 		//cfg.enable_stream(RS2_STREAM_DEPTH, 640, 480, RS2_FORMAT_Z16, 30);
-
+#else
 		prof_ = pl_.start(cfg);
+        auto dev = prof_.get_device();
+        auto playback = dev.as<rs2::playback>();
+        playback.set_real_time( false );
+#endif
 
         /*
         if( cfg_.size() > 0 ){
@@ -272,7 +280,6 @@ class RS2{
 	}
 
 	void show(){
-        std::cout << "SHOW" << std::endl;
 		//viz img
 		cv::imshow("col", cmap);
 		//viz disparity
@@ -280,6 +287,10 @@ class RS2{
 		cv::minMaxIdx(dmap, &mnv, &mxv);
 		cv::imshow("dpt", dmap * (1.0 / mxv));
 
+        if(rec.db_.size() > 0){
+            auto& p = rec.db_.back().pose_;
+            std::cout << p.translation().transpose() << ' ' << p.linear().eulerAngles(2,1,0).transpose() << std::endl;
+        }
 		//cv::imshow("Pipeline Output", kf_pl_->get_last_model_frame());
 	}
 
@@ -291,6 +302,7 @@ class RS2{
 		if (f.is_open()){
 			for(auto& p : poses){
 				f << p << std::endl;
+
 			}
 		}
 
@@ -309,11 +321,14 @@ int main() {
 
 	RS2 rs2;
 
-	for(int i=0; i<10; ++i){
+	for(int i=0; i<0; ++i){
 		// warm-up
 		rs2.get();
-		cv::waitKey( 100 );
-        //rs2.show();
+		rs2.show();
+		int k = cv::waitKey( 1 );
+		if(k == 27){
+		   	break;
+		}
 	}
 
     //cv::waitKey( 0 );
@@ -328,7 +343,8 @@ int main() {
 		   	break;
 		}
 	}
-	rs2.save();
+	//rs2.save();
+    return 0;
 }
 //catch (const rs2::error & e)
 //{
