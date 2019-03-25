@@ -3,6 +3,7 @@
 
 #include "types.hpp"
 #include "tracker.hpp"
+#include "cloud_filter.hpp"
 
 // opencv
 #include <opencv2/core/core.hpp>
@@ -12,20 +13,14 @@
 #include <pcl/io/pcd_io.h>
 #include <pcl/point_types.h>
 #include <pcl/registration/icp.h>
-#include <pcl/features/normal_3d.h>
 #include <pcl/registration/icp_nl.h>
 #include <pcl/registration/transforms.h>
-
-#include <pcl/filters/voxel_grid.h>
-#include <pcl/filters/filter.h>
-#include <pcl/filters/statistical_outlier_removal.h>
-#include <pcl/filters/covariance_sampling.h>
-
 #include <pcl/correspondence.h>
 #include <pcl/registration/correspondence_rejection.h>
 #include <pcl/registration/correspondence_rejection_sample_consensus.h>
 
 #include <pcl/visualization/pcl_visualizer.h>
+
 using pcl::visualization::PointCloudColorHandlerGenericField;
 using pcl::visualization::PointCloudColorHandlerCustom;
 
@@ -64,183 +59,6 @@ cv::Mat drawMatches(
 
     return viz_img;
 }
-
-struct CloudFilter{
-    pcl::VoxelGrid<pcl::PointXYZ> vox_filter;
-    pcl::StatisticalOutlierRemoval<pcl::PointXYZ> out_filter;
-    pcl::NormalEstimation<pcl::PointXYZ, pcl::PointNormal> norm_filter;
-    pcl::search::KdTree<pcl::PointXYZ>::Ptr tree;
-
-    CloudFilter():
-        tree(new pcl::search::KdTree<pcl::PointXYZ> ())
-    {
-        norm_filter.setSearchMethod(tree);
-        norm_filter.setKSearch(30);
-    }
-
-    void downsample(
-            const pcl::PointCloud<pcl::PointXYZ>::Ptr cld_in,
-            pcl::PointCloud<pcl::PointXYZ>::Ptr cld_out){
-        // cloud --> downsampled cloud
-        vox_filter.setLeafSize (0.025, 0.025, 0.025);
-        vox_filter.setInputCloud (cld_in);
-        vox_filter.filter (*cld_out);
-    }
-
-    //void downsample_cov(
-    //        const pcl::PointCloud<pcl::PointNormal>::Ptr cld_in,
-    //        pcl::PointCloud<pcl::PointNormal>::Ptr cld_out){
-    //}
-
-    void inlier(
-            const pcl::PointCloud<pcl::PointXYZ>::Ptr cld_in,
-            pcl::PointCloud<pcl::PointXYZ>::Ptr cld_out
-            ){
-        // cloud --> filtered cloud
-        out_filter.setInputCloud(cld_in);
-        out_filter.setMeanK(100);
-        out_filter.setStddevMulThresh(1.4);
-        out_filter.filter(*cld_out);
-    }
-
-    void fill_xyz(
-            const FrameData& kf,
-            const cv::Mat& K,
-            pcl::PointCloud<pcl::PointXYZ>::Ptr cld,
-            float max_z=10.0
-            ){
-        // keyframe --> cloud
-
-        // unroll params
-        const float fx = K.at<float>(0, 0);
-        const float fy = K.at<float>(1, 1);
-        const float cx = K.at<float>(0, 2);
-        const float cy = K.at<float>(1, 2);
-
-        const int w = kf.img_.cols;
-        const int h = kf.img_.rows;
-
-        const float nan = std::numeric_limits<float>::quiet_NaN();
-
-        // header
-        cld->width    = w;
-        cld->height   = h;
-        cld->is_dense = false;
-        cld->points.resize(cld->width*cld->height);
-
-        // fill cloud
-        for(size_t i=0; i<h; ++i){
-            for(size_t j=0; j<w; ++j){
-                float z = kf.d_img_.at<float>(i,j);
-                auto& p = cld->points[i*w+j];
-
-                if(z<0 || z>max_z){
-                    // mark as invalid
-                    p.x=p.y=p.z=nan;
-                }else{
-                    p.z = z;
-                    p.x = (j-cx) * (z / fx);
-                    p.y = (i-cy) * (z / fy);
-                }
-
-            }
-        }
-    }
-
-    void fill_rgb(
-            const FrameData& kf,
-            pcl::PointCloud<pcl::PointXYZRGB>::Ptr cld
-            ){
-        const int w = kf.img_.cols;
-        const int h = kf.img_.rows;
-
-        // fill cloud
-        for(size_t i=0; i<h; ++i){
-            for(size_t j=0; j<w; ++j){
-                const cv::Vec3b& bgr = kf.img_.at<cv::Vec3b>(i, j);
-                auto& p = cld->points[i*w+j];
-                p.b = bgr[0];
-                p.g = bgr[1];
-                p.r = bgr[2];
-            }
-        }
-    }
-
-
-    void fill_xyzrgb(
-            const FrameData& kf,
-            const cv::Mat& K,
-            pcl::PointCloud<pcl::PointXYZRGB>::Ptr cld,
-            float max_z=10.0){
-
-        // keyframe --> cloud
-
-        // unroll params
-        const float fx = K.at<float>(0, 0);
-        const float fy = K.at<float>(1, 1);
-        const float cx = K.at<float>(0, 2);
-        const float cy = K.at<float>(1, 2);
-
-        const int w = kf.img_.cols;
-        const int h = kf.img_.rows;
-
-        const float nan = std::numeric_limits<float>::quiet_NaN();
-
-        // header
-        cld->width    = w;
-        cld->height   = h;
-        cld->is_dense = false;
-        cld->points.resize(cld->width*cld->height);
-
-        // fill cloud
-        for(size_t i=0; i<h; ++i){
-            for(size_t j=0; j<w; ++j){
-                // xyz
-                float z = kf.d_img_.at<float>(i,j);
-                auto& p = cld->points[i*w+j];
-
-                if(z<0 || z>max_z){
-                    // mark as invalid
-                    p.x=p.y=p.z=nan;
-                }else{
-                    p.z = z;
-                    p.x = (j-cx) * (z / fx);
-                    p.y = (i-cy) * (z / fy);
-                }
-
-                // color
-                const cv::Vec3b& bgr = kf.img_.at<cv::Vec3b>(i, j);
-                p.b = bgr[0];
-                p.g = bgr[1];
-                p.r = bgr[2];
-            }
-        }
-    }
-
-    //void fill_xyzrgb(
-    //        const FrameData& kf,
-    //        const cv::Mat& K,
-    //        pcl::PointCloud<pcl::PointXYZRGB>::Ptr cld,
-    //        float max_z=10.0
-    //        ){
-
-    //}
-
-    void fill_normal(
-            const pcl::PointCloud<pcl::PointXYZ>::Ptr cld_in,
-            pcl::PointCloud<pcl::PointNormal>::Ptr cld_out){
-        norm_filter.setInputCloud (cld_in);
-        norm_filter.compute (*cld_out);
-        pcl::copyPointCloud (*cld_in, *cld_out);
-    }
-
-    void calc(
-            const FrameData& kf0,
-            const FrameData& kf1,
-            Eigen::Isometry3d& T){
-
-    }
-};
 
 struct RGBDRec{
     // parameters
@@ -339,32 +157,78 @@ struct RGBDRec{
         // create intermediate point clouds
         pcl::PointCloud<pcl::PointXYZ>::Ptr cld0 (new pcl::PointCloud<pcl::PointXYZ>);
         pcl::PointCloud<pcl::PointXYZ>::Ptr cld1 (new pcl::PointCloud<pcl::PointXYZ>);
-        pcl::PointCloud<pcl::PointXYZ>::Ptr cld0_i(new pcl::PointCloud<pcl::PointXYZ>);
-        pcl::PointCloud<pcl::PointXYZ>::Ptr cld1_i(new pcl::PointCloud<pcl::PointXYZ>);
-        pcl::PointCloud<pcl::PointXYZ>::Ptr cld0_d(new pcl::PointCloud<pcl::PointXYZ>);
-        pcl::PointCloud<pcl::PointXYZ>::Ptr cld1_d(new pcl::PointCloud<pcl::PointXYZ>);
+        pcl::PointCloud<pcl::PointXYZ>::Ptr cld0_s (new pcl::PointCloud<pcl::PointXYZ>);
+        pcl::PointCloud<pcl::PointXYZ>::Ptr cld1_s (new pcl::PointCloud<pcl::PointXYZ>);
         pcl::PointCloud<pcl::PointNormal>::Ptr cld0_n (new pcl::PointCloud<pcl::PointNormal>);
         pcl::PointCloud<pcl::PointNormal>::Ptr cld1_n (new pcl::PointCloud<pcl::PointNormal>);
+        pcl::PointCloud<pcl::PointNormal>::Ptr cld0_f(new pcl::PointCloud<pcl::PointNormal>);
+        pcl::PointCloud<pcl::PointNormal>::Ptr cld1_f(new pcl::PointCloud<pcl::PointNormal>);
+        pcl::PointCloud<pcl::PointNormal>::Ptr cld0_d(new pcl::PointCloud<pcl::PointNormal>);
+        pcl::PointCloud<pcl::PointNormal>::Ptr cld1_d(new pcl::PointCloud<pcl::PointNormal>);
+        pcl::PointCloud<pcl::PointNormal>::Ptr cld0_i(new pcl::PointCloud<pcl::PointNormal>);
+        pcl::PointCloud<pcl::PointNormal>::Ptr cld1_i(new pcl::PointCloud<pcl::PointNormal>);
 
         // fill cloud
         cf_.fill_xyz(kf0, K_, cld0);
         cf_.fill_xyz(kf1, K_, cld1);
 
-        // apply input transform
-        pcl::transformPointCloud (*cld1, *cld1, T.cast<float>());
+        // downsample 4x
+        cf_.downsample_sub<pcl::PointXYZ>(cld0, cld0_s, 4);
+        cf_.downsample_sub<pcl::PointXYZ>(cld1, cld1_s, 4);
 
-        // downsample
-        cf_.downsample(cld0, cld0_d);
-        cf_.downsample(cld1, cld1_d);
+        // apply input transform
+        pcl::transformPointCloud (*cld1_s, *cld1_s, T.cast<float>());
+
+        // fill normals (IIN)
+        cf_.fill_normal(cld0_s, cld0_n);
+        cf_.fill_normal(cld1_s, cld1_n);
 
         // statistical inlier
-        cf_.inlier(cld0_d, cld0_i);
-        cf_.inlier(cld1_d, cld1_i);
+        // cf_.inlier<pcl::PointNormal>(cld0_n, cld0_i);
+        // cf_.inlier<pcl::PointNormal>(cld1_n, cld1_i);
 
-        // fill normals
-        cf_.fill_normal(cld0_i, cld0_n);
-        cf_.fill_normal(cld1_i, cld1_n);
+        // cleanup
+        std::vector<int> tmp;
 
+        pcl::removeNaNFromPointCloud(*cld0_n, *cld0_f, tmp);
+        cld0_n.swap(cld0_f);
+        tmp.clear();
+        pcl::removeNaNNormalsFromPointCloud(*cld0_n, *cld0_f, tmp);
+        tmp.clear();
+
+        pcl::removeNaNFromPointCloud(*cld1_n, *cld1_f, tmp);
+        cld1_n.swap(cld1_f);
+        tmp.clear();
+        pcl::removeNaNNormalsFromPointCloud(*cld1_n, *cld1_f, tmp);
+        tmp.clear();
+
+        //std::cout << cld0_n->is_dense << ',' << cld1_n->is_dense << std::endl;
+        //std::cout << cld0_f->is_dense << ',' << cld1_f->is_dense << std::endl;
+
+        // downsample
+        // downsample_vox<> / ...
+        cf_.downsample_iss<pcl::PointNormal>(cld0_f, cld0_d);
+        cf_.downsample_iss<pcl::PointNormal>(cld1_f, cld1_d);
+
+        //for(auto& p : cld0_i->points){
+        //    if(!pcl::isFinite(p)){
+        //        std::cout << "(p0) finite check failed!" << std::endl;
+        //    }
+
+        //    if(!pcl::isFinite(p.normal)){
+        //        std::cout << "(n0) finite check failed!" << std::endl;
+        //    }
+        //}
+
+        //for(auto& p : cld1_i->points){
+        //    if(!pcl::isFinite(p)){
+        //        std::cout << "(p1) finite check failed!" << std::endl;
+        //    }
+
+        //    if(!pcl::isFinite(p.normal)){
+        //        std::cout << "(n1) finite check failed!" << std::endl;
+        //    }
+        //}
 
         pcl::IterativeClosestPointWithNormals<pcl::PointNormal, pcl::PointNormal> icp;
         icp.setTransformationEpsilon (1e-8);
@@ -376,8 +240,8 @@ struct RGBDRec{
         // Set the point representation
         //icp.setPointRepresentation (boost::make_shared<const MyPointRepresentation> (point_representation));
 
-        icp.setInputSource (cld1_n); // == T * cld1_n
-        icp.setInputTarget (cld0_n);
+        icp.setInputSource (cld1_d); // == T * cld1_n
+        icp.setInputTarget (cld0_d);
 
         pcl::PointCloud<pcl::PointNormal> Final;
         //std::cout << "ICP ALIGN START" << std::endl;
@@ -390,8 +254,8 @@ struct RGBDRec{
         p->removePointCloud ("map"); 
         p->removePointCloud ("current");
 
-        PointCloudColorHandlerCustom<pcl::PointXYZ> cloud_tgt_h (cld0_i, 0, 255, 0);
-        PointCloudColorHandlerCustom<pcl::PointXYZ> cloud_src_h (cld1_i, 255, 0, 0);
+        PointCloudColorHandlerCustom<pcl::PointNormal> cloud_tgt_h (cld0_i, 0, 255, 0);
+        PointCloudColorHandlerCustom<pcl::PointNormal> cloud_src_h (cld1_i, 255, 0, 0);
         p->addPointCloud (cld0_i, cloud_tgt_h, "target", vp_2);
         p->addPointCloud (cld1_i, cloud_src_h, "source", vp_2);
 
@@ -399,7 +263,7 @@ struct RGBDRec{
         pcl::PointCloud<pcl::PointXYZ>::Ptr cld0_T (new pcl::PointCloud<pcl::PointXYZ>);
         pcl::transformPointCloud (*cld0, *cld0_T, kf0.pose_.cast<float>() );
 
-        pcl::PointCloud<pcl::PointXYZ>::Ptr cld0_Ti (new pcl::PointCloud<pcl::PointXYZ>);
+        pcl::PointCloud<pcl::PointNormal>::Ptr cld0_Ti (new pcl::PointCloud<pcl::PointNormal>);
         pcl::transformPointCloud (*cld0_i, *cld0_Ti, kf0.pose_.cast<float>() );
 
         // add + downsample
@@ -414,7 +278,7 @@ struct RGBDRec{
         vox_filter.setInputCloud (cld_tmp);
         vox_filter.filter (*cld_map_);
 
-        PointCloudColorHandlerCustom<pcl::PointXYZ> cld0_T_h (cld0_Ti, 255, 0, 0);
+        PointCloudColorHandlerCustom<pcl::PointNormal> cld0_T_h (cld0_Ti, 255, 0, 0);
         //PointCloudColorHandlerCustom<pcl::PointXYZRGB> cld_map_h (cld0_T, 0, 0, 255);
         pcl::visualization::PointCloudColorHandlerRGBField<pcl::PointXYZRGB> cld_map_h(cld_map_);
 
@@ -656,6 +520,7 @@ struct RGBDRec{
         }
 
         bool icp_suc2 = icp_f2f_full(kf0, kf1, T01);
+        //bool icp_suc2=false;
 
         if(icp_suc || icp_suc2){
             //std::cout << "ICP SUC" << std::endl;

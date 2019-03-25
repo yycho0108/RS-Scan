@@ -23,6 +23,7 @@ if(SET_USER_BREAK_AT_STARTUP)
 	set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -DBPDEBUG")
 endif()
 
+## CUDA
 find_package(CUDA 10.0 REQUIRED)
 IF (CUDA_FOUND)
     include_directories("${CUDA_INCLUDE_DIRS}")
@@ -38,13 +39,18 @@ if (EIGEN3_INCLUDE_DIR)
 endif (EIGEN3_INCLUDE_DIR)
 
 
+## Realsense 2
 find_package(realsense2 2.17.1 REQUIRED)
 if(NOT realsense2_FOUND)
     message(FATAL_ERROR "\n\n Intel RealSense SDK 2.0 is missing, please install it from https://github.com/IntelRealSense/librealsense/releases\n\n")
 endif()
+include_directories(${realsense_INCLUDE_DIR})
 
+## OpenCV 3/4
 find_package(OpenCV 4.0.1 REQUIRED)
+include_directories(${OpenCV_INCLUDE_DIR})
 
+## PCL
 find_package(PCL 1.7 REQUIRED)
 include_directories(${PCL_INCLUDE_DIRS})
 link_directories(${PCL_LIBRARY_DIRS})
@@ -65,13 +71,12 @@ set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -Wextra -Weffc++")
 
 include_directories(
     include
-    ${realsense_INCLUDE_DIR}
-    ${OpenCV_INCLUDE_DIR}
-	"/home/jamie/libs/KinectFusionLib/include"
+	/home/jamie/libs/KinectFusionLib/include
     )
 
-link_directories("/home/jamie/libs/KinectFusionLib/build")
+link_directories(/home/jamie/libs/KinectFusionLib/build)
 
+add_subdirectory(third_party/TinyEKF)
 
 #add_executable(main main.cpp)
 cuda_add_executable(main main.cpp src/tracker.cpp)
@@ -81,6 +86,7 @@ target_link_libraries(main
 	${OpenCV_LIBS}
 	KinectFusion
     ${PCL_LIBRARIES}
+    tinyekf
     )
 
 #add_executable(test_ir test_ir.cpp)
