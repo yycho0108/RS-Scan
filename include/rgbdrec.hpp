@@ -19,6 +19,11 @@
 #include <pcl/filters/voxel_grid.h>
 #include <pcl/filters/filter.h>
 #include <pcl/filters/statistical_outlier_removal.h>
+#include <pcl/filters/covariance_sampling.h>
+
+#include <pcl/correspondence.h>
+#include <pcl/registration/correspondence_rejection.h>
+#include <pcl/registration/correspondence_rejection_sample_consensus.h>
 
 #include <pcl/visualization/pcl_visualizer.h>
 using pcl::visualization::PointCloudColorHandlerGenericField;
@@ -82,6 +87,11 @@ struct CloudFilter{
         vox_filter.filter (*cld_out);
     }
 
+    //void downsample_cov(
+    //        const pcl::PointCloud<pcl::PointNormal>::Ptr cld_in,
+    //        pcl::PointCloud<pcl::PointNormal>::Ptr cld_out){
+    //}
+
     void inlier(
             const pcl::PointCloud<pcl::PointXYZ>::Ptr cld_in,
             pcl::PointCloud<pcl::PointXYZ>::Ptr cld_out
@@ -137,6 +147,85 @@ struct CloudFilter{
         }
     }
 
+    void fill_rgb(
+            const FrameData& kf,
+            pcl::PointCloud<pcl::PointXYZRGB>::Ptr cld
+            ){
+        const int w = kf.img_.cols;
+        const int h = kf.img_.rows;
+
+        // fill cloud
+        for(size_t i=0; i<h; ++i){
+            for(size_t j=0; j<w; ++j){
+                const cv::Vec3b& bgr = kf.img_.at<cv::Vec3b>(i, j);
+                auto& p = cld->points[i*w+j];
+                p.b = bgr[0];
+                p.g = bgr[1];
+                p.r = bgr[2];
+            }
+        }
+    }
+
+
+    void fill_xyzrgb(
+            const FrameData& kf,
+            const cv::Mat& K,
+            pcl::PointCloud<pcl::PointXYZRGB>::Ptr cld,
+            float max_z=10.0){
+
+        // keyframe --> cloud
+
+        // unroll params
+        const float fx = K.at<float>(0, 0);
+        const float fy = K.at<float>(1, 1);
+        const float cx = K.at<float>(0, 2);
+        const float cy = K.at<float>(1, 2);
+
+        const int w = kf.img_.cols;
+        const int h = kf.img_.rows;
+
+        const float nan = std::numeric_limits<float>::quiet_NaN();
+
+        // header
+        cld->width    = w;
+        cld->height   = h;
+        cld->is_dense = false;
+        cld->points.resize(cld->width*cld->height);
+
+        // fill cloud
+        for(size_t i=0; i<h; ++i){
+            for(size_t j=0; j<w; ++j){
+                // xyz
+                float z = kf.d_img_.at<float>(i,j);
+                auto& p = cld->points[i*w+j];
+
+                if(z<0 || z>max_z){
+                    // mark as invalid
+                    p.x=p.y=p.z=nan;
+                }else{
+                    p.z = z;
+                    p.x = (j-cx) * (z / fx);
+                    p.y = (i-cy) * (z / fy);
+                }
+
+                // color
+                const cv::Vec3b& bgr = kf.img_.at<cv::Vec3b>(i, j);
+                p.b = bgr[0];
+                p.g = bgr[1];
+                p.r = bgr[2];
+            }
+        }
+    }
+
+    //void fill_xyzrgb(
+    //        const FrameData& kf,
+    //        const cv::Mat& K,
+    //        pcl::PointCloud<pcl::PointXYZRGB>::Ptr cld,
+    //        float max_z=10.0
+    //        ){
+
+    //}
+
     void fill_normal(
             const pcl::PointCloud<pcl::PointXYZ>::Ptr cld_in,
             pcl::PointCloud<pcl::PointNormal>::Ptr cld_out){
@@ -158,7 +247,7 @@ struct RGBDRec{
     cv::Mat K_, Ki_;
 
     // data
-    pcl::PointCloud<pcl::PointXYZ>::Ptr cld_map_;
+    pcl::PointCloud<pcl::PointXYZRGB>::Ptr cld_map_;
     std::vector<FrameData> db_;
 
     // handles
@@ -169,7 +258,7 @@ struct RGBDRec{
     CloudFilter cf_;
 
     RGBDRec():
-    cld_map_(new pcl::PointCloud<pcl::PointXYZ>)
+    cld_map_(new pcl::PointCloud<pcl::PointXYZRGB>)
     {
         det_ = cv::ORB::create();
         des_ = cv::ORB::create();
@@ -226,6 +315,21 @@ struct RGBDRec{
 
     void apply_motion(const FrameData& kf0, FrameData& kf1){}
 
+    bool icp_f2f_shot(
+            const FrameData& kf0,
+            const FrameData& kf1,
+            Eigen::Isometry3d& T
+            ){
+        pcl::PointCloud<pcl::PointXYZRGB>::Ptr cld0 (new pcl::PointCloud<pcl::PointXYZRGB>);
+        pcl::PointCloud<pcl::PointXYZRGB>::Ptr cld1 (new pcl::PointCloud<pcl::PointXYZRGB>);
+
+        // fill cloud
+        cf_.fill_xyzrgb(kf0, K_, cld0);
+        cf_.fill_xyzrgb(kf1, K_, cld1);
+
+        //pcl::SHOTEstimationOMP<pcl::PointXYZRGB, pcl::Normal, pcl::SHOT352> des;
+    }
+
     bool icp_f2f_full(
             const FrameData& kf0,
             const FrameData& kf1,
@@ -246,6 +350,9 @@ struct RGBDRec{
         cf_.fill_xyz(kf0, K_, cld0);
         cf_.fill_xyz(kf1, K_, cld1);
 
+        // apply input transform
+        pcl::transformPointCloud (*cld1, *cld1, T.cast<float>());
+
         // downsample
         cf_.downsample(cld0, cld0_d);
         cf_.downsample(cld1, cld1_d);
@@ -258,8 +365,9 @@ struct RGBDRec{
         cf_.fill_normal(cld0_i, cld0_n);
         cf_.fill_normal(cld1_i, cld1_n);
 
+
         pcl::IterativeClosestPointWithNormals<pcl::PointNormal, pcl::PointNormal> icp;
-        icp.setTransformationEpsilon (1e-6);
+        icp.setTransformationEpsilon (1e-8);
         // Set the maximum distance between two correspondences (src<->tgt) to 10cm
         // Note: adjust this based on the size of your datasets
         icp.setMaxCorrespondenceDistance (0.1);
@@ -268,14 +376,13 @@ struct RGBDRec{
         // Set the point representation
         //icp.setPointRepresentation (boost::make_shared<const MyPointRepresentation> (point_representation));
 
-        icp.setInputSource (cld1_n);
+        icp.setInputSource (cld1_n); // == T * cld1_n
         icp.setInputTarget (cld0_n);
 
         pcl::PointCloud<pcl::PointNormal> Final;
         //std::cout << "ICP ALIGN START" << std::endl;
         icp.align(Final);
         //std::cout << "ICP ALIGN DONE" << std::endl;
-
 
         // viz f2f results
         p->removePointCloud ("source");
@@ -290,21 +397,36 @@ struct RGBDRec{
 
         // viz aggregate results
         pcl::PointCloud<pcl::PointXYZ>::Ptr cld0_T (new pcl::PointCloud<pcl::PointXYZ>);
-        pcl::transformPointCloud (*cld0_i, *cld0_T, kf0.pose_.cast<float>() );
+        pcl::transformPointCloud (*cld0, *cld0_T, kf0.pose_.cast<float>() );
+
+        pcl::PointCloud<pcl::PointXYZ>::Ptr cld0_Ti (new pcl::PointCloud<pcl::PointXYZ>);
+        pcl::transformPointCloud (*cld0_i, *cld0_Ti, kf0.pose_.cast<float>() );
 
         // add + downsample
-        pcl::PointCloud<pcl::PointXYZ>::Ptr cld_tmp(new pcl::PointCloud<pcl::PointXYZ>);
-        *cld_tmp = *cld_map_ + *cld0_T;
-        cf_.downsample(cld_tmp, cld_map_);
+        pcl::PointCloud<pcl::PointXYZRGB>::Ptr cld_tmp(new pcl::PointCloud<pcl::PointXYZRGB>);
+        pcl::copyPointCloud(*cld0_T, *cld_tmp); // fill xyz
+        cf_.fill_rgb(kf0, cld_tmp); // fill rgb
 
-        PointCloudColorHandlerCustom<pcl::PointXYZ> cld0_T_h (cld0_T, 255, 0, 0);
-        PointCloudColorHandlerCustom<pcl::PointXYZ> cld_map_h (cld0_T, 0, 0, 255);
+        *cld_tmp += *cld_map_;
+        //cf_.downsample(cld_tmp, cld_map_);
+        pcl::VoxelGrid<pcl::PointXYZRGB> vox_filter;
+        vox_filter.setLeafSize (0.025, 0.025, 0.025);
+        vox_filter.setInputCloud (cld_tmp);
+        vox_filter.filter (*cld_map_);
+
+        PointCloudColorHandlerCustom<pcl::PointXYZ> cld0_T_h (cld0_Ti, 255, 0, 0);
+        //PointCloudColorHandlerCustom<pcl::PointXYZRGB> cld_map_h (cld0_T, 0, 0, 255);
+        pcl::visualization::PointCloudColorHandlerRGBField<pcl::PointXYZRGB> cld_map_h(cld_map_);
 
         p->addPointCloud (cld_map_, cld_map_h, "map", vp_1);
-        p->addPointCloud (cld0_T, cld0_T_h, "current", vp_1);
+        p->addPointCloud (cld0_Ti, cld0_T_h, "current", vp_1);
+
+        p->setPointCloudRenderingProperties (
+                pcl::visualization::PCL_VISUALIZER_POINT_SIZE,
+                3, "map");
 
         //PCL_INFO ("Press q to continue the registration.\n");
-        p->spin ();
+        p->spinOnce ();
         p->removePointCloud ("source"); 
         p->removePointCloud ("target");
         p->removePointCloud ("map"); 
@@ -328,10 +450,9 @@ struct RGBDRec{
         // pcl::transformPointCloud (*cld0, *tx_cld0, kf0.pose_);
         // pcl::transformPointCloud (*cld1, *tx_cld1, kf0.pose_*icp.getFinalTransformation());
 
-        T.matrix() = icp.getFinalTransformation().cast<double>();
+        T.matrix() = icp.getFinalTransformation().cast<double>() * T.matrix();
         return true;
     }
-
 
     bool icp_f2f(
             const FrameData& kf0,
@@ -341,6 +462,60 @@ struct RGBDRec{
             const std::vector<cv::Point2f>& pt1,
             Eigen::Isometry3d& T
             ){
+        // create intermediate point clouds
+        pcl::PointCloud<pcl::PointXYZ>::Ptr cld0 (new pcl::PointCloud<pcl::PointXYZ>);
+        pcl::PointCloud<pcl::PointXYZ>::Ptr cld1 (new pcl::PointCloud<pcl::PointXYZ>);
+        //pcl::PointCloud<pcl::PointXYZ>::Ptr cld0_i(new pcl::PointCloud<pcl::PointXYZ>);
+        //pcl::PointCloud<pcl::PointXYZ>::Ptr cld1_i(new pcl::PointCloud<pcl::PointXYZ>);
+        //pcl::PointCloud<pcl::PointXYZ>::Ptr cld0_d(new pcl::PointCloud<pcl::PointXYZ>);
+        //pcl::PointCloud<pcl::PointXYZ>::Ptr cld1_d(new pcl::PointCloud<pcl::PointXYZ>);
+        //pcl::PointCloud<pcl::PointNormal>::Ptr cld0_n (new pcl::PointCloud<pcl::PointNormal>);
+        //pcl::PointCloud<pcl::PointNormal>::Ptr cld1_n (new pcl::PointCloud<pcl::PointNormal>);
+
+        // fill cloud
+        cf_.fill_xyz(kf0, K_, cld0);
+        cf_.fill_xyz(kf1, K_, cld1);
+
+        // assume tracking mostly solved corr ...
+        // pcl::CorrespondenceEstimation<?,?> est;
+        pcl::CorrespondencesPtr corr0(new pcl::Correspondences),
+            corr1(new pcl::Correspondences);
+        corr0->reserve(m01.size());
+
+        const int w = kf0.img_.cols;
+        for(auto& m : m01){
+
+            int j0 = pt0[m.queryIdx].x;
+            int i0 = pt0[m.queryIdx].y;
+
+            int j1 = pt1[m.trainIdx].x;
+            int i1 = pt1[m.trainIdx].y;
+
+            if (!std::isfinite(cld0->points[i0*w+j0].z))
+                continue;
+
+            if (!std::isfinite(cld1->points[i1*w+j1].z))
+                continue;
+
+            corr0->emplace_back(
+                    i1*w+j1, i0*w+j0, 
+                    m.distance);
+        }
+
+        pcl::registration::CorrespondenceRejectorSampleConsensus< pcl::PointXYZ > sac;
+        sac.setInputCloud( cld1 );
+        sac.setTargetCloud( cld0 );
+        sac.setInlierThreshold( 0.05 );
+        sac.setMaxIterations(100);
+        sac.setInputCorrespondences( corr0 );
+        sac.getCorrespondences( *corr1 );
+
+        // ..-> T * cld1
+
+        T.matrix() = sac.getBestTransformation().cast<double>();
+        return true;
+#if 0
+
         // unroll data
         float fx = K_.at<float>(0, 0);
         float fy = K_.at<float>(1, 1);
@@ -442,6 +617,7 @@ struct RGBDRec{
 
         //T = icp.getFinalTransformation().cast<double>();
         return true;
+#endif
     }
 
     bool process_frame(
@@ -466,19 +642,22 @@ struct RGBDRec{
         std::vector<cv::DMatch> m01;
         this->trk_.track(kf0, kf1, pt0, pt1, m01);
 
-        //cv::Mat viz = drawMatches(kf0, kf1, pt0, pt1, m01);
-        //cv::imshow("viz", viz);
+        cv::Mat viz = drawMatches(kf0, kf1, pt0, pt1, m01);
+        cv::imshow("viz", viz);
 
-        // yay!
         Eigen::Isometry3d T01;
-        //bool icp_suc = icp_f2f(
-        //        kf0, kf1, m01,
-        //        pt0, pt1,
-        //        T01);
+        T01.setIdentity();
+        bool icp_suc = icp_f2f(
+                kf0, kf1, m01,
+                pt0, pt1,
+                T01);
+        if(!icp_suc){
+            T01.setIdentity();
+        }
 
-        bool icp_suc = icp_f2f_full(kf0, kf1, T01);
+        bool icp_suc2 = icp_f2f_full(kf0, kf1, T01);
 
-        if(icp_suc){
+        if(icp_suc || icp_suc2){
             //std::cout << "ICP SUC" << std::endl;
             //std::cout << T01.matrix() << std::endl;
 
