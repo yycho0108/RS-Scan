@@ -184,23 +184,18 @@ struct RGBDRec{
         cf_.fill_normal(cld1_s, cld1_n);
 
         // statistical inlier
-        // cf_.inlier<pcl::PointNormal>(cld0_n, cld0_i);
-        // cf_.inlier<pcl::PointNormal>(cld1_n, cld1_i);
+        cf_.inlier<pcl::PointNormal>(cld0_n, cld0_i);
+        cf_.inlier<pcl::PointNormal>(cld1_n, cld1_i);
 
         // cleanup
         std::vector<int> tmp;
+        pcl::removeNaNFromPointCloud(*cld0_i, *cld0_f, tmp);
+        cld0_i.swap(cld0_f);
+        pcl::removeNaNNormalsFromPointCloud(*cld0_i, *cld0_f, tmp);
 
-        pcl::removeNaNFromPointCloud(*cld0_n, *cld0_f, tmp);
-        cld0_n.swap(cld0_f);
-        tmp.clear();
-        pcl::removeNaNNormalsFromPointCloud(*cld0_n, *cld0_f, tmp);
-        tmp.clear();
-
-        pcl::removeNaNFromPointCloud(*cld1_n, *cld1_f, tmp);
-        cld1_n.swap(cld1_f);
-        tmp.clear();
-        pcl::removeNaNNormalsFromPointCloud(*cld1_n, *cld1_f, tmp);
-        tmp.clear();
+        pcl::removeNaNFromPointCloud(*cld1_i, *cld1_f, tmp);
+        cld1_i.swap(cld1_f);
+        pcl::removeNaNNormalsFromPointCloud(*cld1_i, *cld1_f, tmp);
 
         //std::cout << cld0_n->is_dense << ',' << cld1_n->is_dense << std::endl;
         //std::cout << cld0_f->is_dense << ',' << cld1_f->is_dense << std::endl;

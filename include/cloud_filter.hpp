@@ -35,8 +35,7 @@ struct CloudFilter{
             size_t scale=2
             ){
         // sub-sampling
-
-        cld_out->is_dense = false;
+        cld_out->is_dense = cld_in->is_dense;
         cld_out->width = cld_in->width / scale;
         cld_out->height = cld_in->height / scale;
 
